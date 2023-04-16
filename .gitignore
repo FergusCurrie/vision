@@ -1,0 +1,7 @@
+__pycache__
+.ipynb*
+.metaflow
+.venv
+.virtual_documents
+checkponts/
+data/
