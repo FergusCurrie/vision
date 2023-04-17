@@ -1,5 +1,24 @@
 """
 Load in pascal dataset to data generator 
+
+
+def data_augmentation(image, label):
+    # use numpy for random scalar between 0 and 512 for variable called x
+    NUM_BOXES = 1
+    boxes = tf.random.uniform(shape=(NUM_BOXES, 4))
+
+    print(boxes.shape)
+
+    image_ = tf.image.crop_and_resize(image, boxes=boxes, crop_size=[image_size, image_size], method="bilinear")
+    label_ = tf.image.crop_and_resize(label, boxes=boxes, crop_size=[image_size, image_size], methd="nearest")
+
+    return image_, label_
+
+Pretty good augmentatoin tensorflow:
+    https://www.datacamp.com/tutorial/complete-guide-data-augmentation
+
+
+
 """
 import os
 from skimage import io
@@ -14,11 +33,11 @@ from PIL import Image
 
 
 class PascalDataGenerator:
-    def __init__(self, batch_size=8, image_size=572, train_test_val="train"):
-        self.batch_size = batch_size
+    def __init__(self, image_size=572, batch_size=8, train_test_val="train"):
         self.image_size = image_size
         self.train, self.trainval, self.val = self.load_txts()
         self.train_test_val = train_test_val
+        self.batch_size = batch_size
 
     def get_pascal_labels(self):
         """Load the mapping that associates pascal classes with label colors
@@ -67,6 +86,18 @@ class PascalDataGenerator:
         label_mask = label_mask.astype(int)
         return label_mask
 
+    def augmentation(self, image, label):
+        if np.random.uniform(0, 1, 1) > 0.7:
+            image = tf.image.flip_left_right(image)
+            label = tf.image.flip_left_right(label)
+        if np.random.uniform(0, 1, 1) > 0.5:
+            central_frac = np.random.uniform(0.5, 0.9, 1)
+            image = tf.image.central_crop(image, central_fraction=central_frac)
+            label = tf.image.central_crop(label, central_fraction=central_frac)
+            image = tf.image.resize(image[np.newaxis, ...], (self.image_size, self.image_size), method="bilinear")[0]
+            label = tf.image.resize(label[np.newaxis, ...], (self.image_size, self.image_size), method="nearest")[0]
+        return image, label
+
     def load_txts(self):
         with open(f"data/VOCdevkit/VOC2010/ImageSets/Segmentation/train.txt") as f:
             train = f.read().splitlines()
@@ -103,9 +134,14 @@ class PascalDataGenerator:
             # sample
             batch_filenames = random.sample(data, self.batch_size)
             batch = [self.load_filename(b) for b in batch_filenames]
-            images = np.array([b[0] for b in batch])
-            labels = np.array([b[1] for b in batch])
-
+            images, labels = [], []
+            for b in batch:
+                image, label = b
+                image, label = self.augmentation(image, label)
+                images.append(image)
+                labels.append(label)
+            images = np.array(images)
+            labels = np.array(labels)
             yield (images, labels)
 
 
@@ -128,6 +164,9 @@ if __name__ == "__main__":
     )
 
     print(tfds.element_spec)
+
+    gen = PascalDataGenerator().data_generator()
+    print(next(iter(gen)))
 
 # img, msk = load_filename("2007_000032")
 # print(msk.shape)
