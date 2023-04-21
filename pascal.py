@@ -99,17 +99,17 @@ class PascalDataGenerator:
         return image, label
 
     def load_txts(self):
-        with open(f"data/VOCdevkit/VOC2010/ImageSets/Segmentation/train.txt") as f:
+        with open(f"data/PASCAL_VOC_2010/VOC2010/ImageSets/Segmentation/train.txt") as f:
             train = f.read().splitlines()
-        with open(f"data/VOCdevkit/VOC2010/ImageSets/Segmentation/trainval.txt") as f:
+        with open(f"data/PASCAL_VOC_2010/VOC2010/ImageSets/Segmentation/trainval.txt") as f:
             trainval = f.read().splitlines()
-        with open(f"data/VOCdevkit/VOC2010/ImageSets/Segmentation/val.txt") as f:
+        with open(f"data/PASCAL_VOC_2010/VOC2010/ImageSets/Segmentation/val.txt") as f:
             val = f.read().splitlines()
         return train, trainval, val
 
     def load_filename(self, filename):
-        image = io.imread(f"data/VOCdevkit/VOC2010/JPEGImages/{filename}.jpg")
-        label = io.imread(f"data/VOCdevkit/VOC2010/SegmentationClass/{filename}.png")[..., :3]
+        image = io.imread(f"data/PASCAL_VOC_2010/VOC2010/JPEGImages/{filename}.jpg")
+        label = io.imread(f"data/PASCAL_VOC_2010/VOC2010/SegmentationClass/{filename}.png")[..., :3]
         label = self.encode_segmap(label)
         label = label[..., np.newaxis]
 
@@ -143,6 +143,25 @@ class PascalDataGenerator:
             images = np.array(images)
             labels = np.array(labels)
             yield (images, labels)
+
+
+def get_pascal_tfds(image_size, batch_size):
+    pdg = PascalDataGenerator(image_size=image_size, batch_size=batch_size)
+    train_tfds = tf.data.Dataset.from_generator(
+        pdg.data_generator,
+        output_types=(tf.float32, tf.float32),
+        output_shapes=([batch_size, image_size, image_size, 3], [batch_size, image_size, image_size, 21]),
+    )
+
+    # VAL
+    pdg = PascalDataGenerator(image_size=image_size, batch_size=batch_size, train_test_val="val")
+    val_tfds = tf.data.Dataset.from_generator(
+        pdg.data_generator,
+        output_types=(tf.float32, tf.float32),
+        output_shapes=([batch_size, image_size, image_size, 3], [batch_size, image_size, image_size, 21]),
+    )
+
+    return train_tfds, val_tfds
 
 
 if __name__ == "__main__":

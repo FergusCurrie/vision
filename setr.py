@@ -5,13 +5,11 @@ TODO:
 - validation loss 
 - tensorflow config
 """
-import os
 import tensorflow as tf
-import numpy as np
-from pascal import PascalDataGenerator
+from pascal import get_pascal_tfds
 import warnings
 from transformer import MyTransformer
-import pandas as pd
+from training import keras_train
 
 
 warnings.filterwarnings("ignore")
@@ -85,42 +83,6 @@ def build_setr(inputs):
     return model
 
 
-def train_step(images, labels, model, loss_object, metric, optimizer):
-    print(tf.math.reduce_mean(images))
-    print(tf.math.reduce_mean(labels))
-    with tf.GradientTape() as tape:
-        logits = model(images)
-        print(tf.math.reduce_mean(logits))
-        loss = loss_object(labels, logits)
-        print(tf.math.reduce_mean(loss))
-        # print(f"loss = {tf.math.reduce_mean(loss)}")
-        metric.update_state(labels, logits)
-    grads = tape.gradient(loss, model.trainable_variables)
-    # print(tf.math.reduce_mean(grads))
-    print("GRADS MEAN CALC")
-    optimizer.apply_gradients(zip(grads, model.trainable_variables))
-    return loss
-
-
-def train_loop(model, loss_object, metric, optimizer, tfds):
-    training_steps = 120
-    tfds = tfds.batch(1)
-    for epoch in range(50):
-        images, labels = next(iter(tfds))
-        images = images[0]
-        labels = labels[0]
-        loss = train_step(images, labels, model, loss_object, metric, optimizer)
-
-        # if i > training_steps:
-        #     break
-        # i += 1
-
-        print(f"epoch{epoch}: loss = {loss:.2f} accuracy metric = {metric.result():.2f}")
-
-
-# tf.debugging.enable_check_numerics(stack_height_limit=30, path_length_limit=50)
-
-
 image_size = 512
 seq_len = 1024  # 32 * 32 for (image_size=512)//16 patches
 d_model = 512
@@ -132,72 +94,11 @@ inputs = tf.keras.Input(
         16 * 16 * 3,
     )
 )
-
-# TRAIN
-pdg = PascalDataGenerator(image_size=image_size, batch_size=batch_size)
-train_tfds = tf.data.Dataset.from_generator(
-    pdg.data_generator,
-    output_types=(tf.float32, tf.float32),
-    output_shapes=([batch_size, image_size, image_size, 3], [batch_size, image_size, image_size, 21]),
-)
-train_tfds = train_tfds.map(image_sequentialisation)  # .batch(batch_size)
-
-
-# VAL
-pdg = PascalDataGenerator(image_size=image_size, batch_size=batch_size, train_test_val="val")
-val_tfds = tf.data.Dataset.from_generator(
-    pdg.data_generator,
-    output_types=(tf.float32, tf.float32),
-    output_shapes=([batch_size, image_size, image_size, 3], [batch_size, image_size, image_size, 21]),
-)
-val_tfds = val_tfds.map(image_sequentialisation)
-
-# adam = tf.keras.optimizers.Adam(clipvalue=0.1)
-adamw = tf.keras.optimizers.experimental.AdamW()  # TODO: remove
-loss = tf.keras.losses.CategoricalCrossentropy(from_logits=False)
-categorical_acc = tf.keras.metrics.CategoricalAccuracy()
-iou = tf.keras.metrics.MeanIoU(num_classes=21)
-
 setr = build_setr(inputs)
 
-
-# train_loop(setr, loss, metric, adamw, tfds)
-
-checkpoint_path = "checkpoints/cp.ckpt"
-checkpoint_dir = os.path.dirname(checkpoint_path)
-
-# Create a callback that saves the model's weights
-cp_callback = tf.keras.callbacks.ModelCheckpoint(filepath=checkpoint_path, save_weights_only=True, verbose=1, save_best_only=True)
+train_tfds, val_tfds = get_pascal_tfds(image_size=image_size, batch_size=batch_size)
+train_tfds = train_tfds.map(image_sequentialisation)
+val_tfds = val_tfds.map(image_sequentialisation)
 
 
-setr.compile(loss=loss, optimizer=adamw, metrics=[categorical_acc])
-history = setr.fit(
-    x=train_tfds,
-    steps_per_epoch=40,
-    batch_size=batch_size,
-    epochs=10,
-    verbose=1,
-    validation_steps=100,
-    validation_data=val_tfds,
-    callbacks=[cp_callback],
-)
-
-history_df = pd.DataFrame(history.history)
-
-# Save the history to a CSV file
-history_df.to_csv("history/setr_history.csv", index=False)
-
-# manual trianing
-
-
-# testing pushing data through for nan
-# batch = next(iter(tfds))
-# batch[0].shape, batch[1].shape
-# print(np.unique(batch[1]))
-# pred = setr(batch[0])
-# print(tf.math.reduce_mean(pred))
-# print(tf.math.reduce_mean(batch[1]))
-# print(pred.shape)
-# print(batch[1].shape)
-# l = loss(y_true=batch[1], y_pred=pred)
-# print(l)
+keras_train(setr, train_tfds, val_tfds, batch_size, epochs=10, name="setr")
