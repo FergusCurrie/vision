@@ -17,27 +17,55 @@ def data_augmentation(image, label):
 Pretty good augmentatoin tensorflow:
     https://www.datacamp.com/tutorial/complete-guide-data-augmentation
 
+class TFToPyTorchDataset(torch.utils.data.Dataset):
+    def __init__(self, tf_dataset):
+        self.tf_dataset = tf_dataset
 
+    def __getitem__(self, index):
+        # Get a single example from the TensorFlow dataset
+        example = next(iter(self.tf_dataset.skip(index).take(1)))
+
+        # Convert the example from TensorFlow tensor to PyTorch tensor
+        x = torch.from_numpy(example[0].numpy())
+        y = torch.from_numpy(example[1].numpy())
+
+        return x, y
+
+    def __len__(self):
+        return len(self.tf_dataset)
 
 """
 import os
+
+os.environ["CUDA_VISIBLE_DEVICES"] = ""
+import tensorflow as tf
+
+os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 from skimage import io
 import random
 import numpy as np
-import tensorflow as tf
 from skimage.transform import resize
-import tensorflow as tf
+
 
 # from sklearn.preprocessing import LabelEncoder
 from PIL import Image
 
 
 class PascalDataGenerator:
-    def __init__(self, image_size=572, batch_size=8, train_test_val="train"):
+    def __init__(self, image_size=572, batch_size=8, train_test_val="train", backend="tf"):
         self.image_size = image_size
         self.train, self.trainval, self.val = self.load_txts()
         self.train_test_val = train_test_val
         self.batch_size = batch_size
+        self.backend = backend
+        # if backend == 'tf':
+        #     import tensorflow as tf
+
+    def resize_bilinear():
+        pass
+
+    def resize_nearest():
+        pass
 
     def get_pascal_labels(self):
         """Load the mapping that associates pascal classes with label colors
@@ -116,9 +144,6 @@ class PascalDataGenerator:
         image = tf.image.resize(image[np.newaxis, ...], (self.image_size, self.image_size), method="bilinear")[0]
         label = tf.image.resize(label[np.newaxis, ...], (self.image_size, self.image_size), method="nearest")[0]
 
-        # tf.debugging.check_numerics(label, "label is nan")
-        # tf.debugging.check_numerics(image, "image is nan")
-
         return image / 255, tf.keras.utils.to_categorical(label, num_classes=21)
 
     def data_generator(self):
@@ -162,6 +187,9 @@ def get_pascal_tfds(image_size, batch_size):
     )
 
     return train_tfds, val_tfds
+
+
+# def get_pascal_torch():
 
 
 if __name__ == "__main__":

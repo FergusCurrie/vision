@@ -3,5 +3,6 @@ __pycache__
 .metaflow
 .venv
 .virtual_documents
-checkponts/
+checkpoints/
 data/
+history/
