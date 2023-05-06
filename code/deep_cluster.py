@@ -26,6 +26,12 @@ check any TODOS
 test epoch on datagenerator - does it work?
 
 logging + log levels? 
+
+random init 
+
+
+using wrong clustering 
+k
 '''
 
 import torch 
@@ -35,7 +41,7 @@ from data_loader.torch_imagenet import get_imagenet, get_imagenet_class_id_dicti
 import numpy as np 
 import faiss
 
-NUM_CLUSTERS = 1000
+NUM_CLUSTERS = 1000 # TODO: 10000
 
 # Load the AlexNext model
 # alexnet = models.alexnet(weights=None)
@@ -59,11 +65,17 @@ class DeepCluster(nn.Module):
         return class_preds, features 
 
 def calculuate_cluster_weightings(cluster_assignments):
-    # first calculate cluster weightings as inverse of size of clusters 
+    '''
+    Calculates inverse of size of cluster. 
+    Args:
+        cluster_assignments: dictionary mapping file_str to cluster idx
+    Returns:
+        cluster_weightings: dictionary mapping cluster idx to cluster weighting
+    '''
     cluster_counts, cluster_weightings = {}, {}
     for i in range(NUM_CLUSTERS):
         cluster_counts[i] = 0
-    for _, cluster in cluster_counts.items():
+    for _, cluster in cluster_assignments.items():
         cluster_counts[cluster] += 1
 
     for cluster, count in cluster_counts.items():
@@ -72,18 +84,29 @@ def calculuate_cluster_weightings(cluster_assignments):
 
 def loss(y_pred, y, cluster_weightings, synsetid2idx):
     '''
-    y_pred is (batch_size,NUM_CLUSTERS)
-    y is (batch_size,) of synsetid strs 
-    cluster_weightings maps cluster idx to weightign (based on inverse of size)
-    sysnsetid2idx maps synset idx to cluster idx 
-
+    Args:
+        y_pred is model output (batch_size,NUM_CLUSTERS)
+        y is (batch_size,) of synsetid strs
+        cluster_weightings maps cluster idx to weightings (based on inverse of size)
+        synsetid2idx maps synset idx to cluster idx
+    Returns
+        negative log liklihood loss, per instance weighted inversely to size of cluster
     '''
     ytrue = [synsetid2idx[y_i] for y_i in y]
-    weights = [value for item,value in cluster_weightings.items()] # TODO: make sure this is in correct order
+    weights = [value for _,value in cluster_weightings.items()] # TODO: make sure this is in correct order
     negative_log_liklihood = torch.nn.NLLLoss(weight=weights)
     return negative_log_liklihood(y_pred, ytrue)
 
 def epoch(dataloader, model, cluster_assignments, optimizer, synsetid2idx):
+    '''
+    Train one epoch on model. 
+    Args:
+        dataloader: dataloader for imagenet dataset
+        model: deepcluster model
+        cluster_assignments: dictionary mapping file_str to cluster idx
+        optimizer: optimizer for deepcluster model
+        synsetid2idx: dictionary mapping synsetid to cluster idx
+    '''
     cluster_weightings = calculuate_cluster_weightings(cluster_assignments)
 
     size = len(dataloader.dataset)
@@ -105,6 +128,13 @@ def epoch(dataloader, model, cluster_assignments, optimizer, synsetid2idx):
             print(f"loss: {loss:>7f}  [{current:>5d}/{size:>5d}]")
 
 def forward_full_dataset(imagenet, dc):
+    '''
+    Args:
+        imagenet: dataloader for imagenet dataset
+        dc: deepcluster model
+    Returns:
+        file_str2embedding: dictionary mapping file_str to deep cluster model feature embedding
+    '''
     # First do a foward pass of the dataset 
     file_str2embedding = {}
     with torch.no_grad():
@@ -114,8 +144,8 @@ def forward_full_dataset(imagenet, dc):
             images = images.to(device)
 
             if batch_idx % 100 == 0:
-                print(f'Batch {batch_idx} of {len(imagenet)}')
-                if batch_idx != 0:
+                print(f'Cluster predictions {batch_idx} of {len(imagenet)}')
+                if batch_idx > 2000:
                     break
             
             # forward pass
@@ -127,10 +157,15 @@ def forward_full_dataset(imagenet, dc):
     return file_str2embedding
 
 def faiss_pca(X):
-    # PCA transform with faiss-gpu
-    mat = faiss.PCAMatrix(512, 128) # d_in=512, d_out=128
+    '''
+    Uses faiss library to do PCA transform on X.
+    Args:
+        X: numpy array of shape (len(dataset), n_features=256*6*6)
+    Returns:
+        pca transform of X 
+    '''
+    mat = faiss.PCAMatrix(d_in=9216, d_out=1256) 
     mat.train(X)
-    assert mat.is_trained
     X = mat.apply(X)
     return X 
 
@@ -141,19 +176,37 @@ def standardise(X):
     return X
 
 def faiss_kmeans(X):
-    # Init settings 
-    ncentroids = 5 
-    niter = 20
-    verbose = True
-
-    d = X.shape[1]
-    kmeans = faiss.Kmeans(d, ncentroids, niter=niter, verbose=verbose)
-    kmeans.train(X)
+    '''
+    Calculate kmeans cluster assignments for X.
+    Args:
+        X: numpy array of shape (len(dataset), n_features=256*6*6)
+    Returns:
+        cluster_assignments: numpy array of shape (len(dataset), 1) of cluster assignments
+    '''
+    kmeans = faiss.Clustering(X.shape[1], NUM_CLUSTERS)
+    kmeans.seed(23)
+    kmeans.niter=20
+    res = faiss.StandardGpuResources()
+    flat_config = faiss.GpuIndexFlatConfig()
+    flat_config.useFloat16 = False
+    flat_config.device = 0
+    index = faiss.GpuIndexFlatL2(res, X.shape[1], flat_config)
+    kmeans.train(X, index)
     _, cluster_assignments = kmeans.index.search(X, 1)
     assert(cluster_assignments.shape == (len(X), 1))
     return cluster_assignments
 
+
+
 def cluster(imagenet, dc):
+    '''
+    Find cluster assignments for all images in imagenet dataset.
+    Args:
+        imagenet: dataloader for imagenet dataset
+        dc: deepcluster model
+    Returns:
+        file_str2cluster_assignment: dictionary mapping file_str to cluster assignment
+    '''
     file_str2embedding = forward_full_dataset(imagenet, dc)
 
     # Stack into data matrix 
@@ -176,6 +229,13 @@ def cluster(imagenet, dc):
 
 
 def train(dc, imagenet, epochs=500):
+    '''
+    Training loop for Deep Cluster.
+    Args:
+        dc: deepcluster model
+        imagenet: dataloader for imagenet dataset  
+        epochs: number of epochs to train for
+    '''
     adam = torch.optim.Adam(dc.parameters(), lr=1e-4)
     _, _, synsetid2idx = get_imagenet_class_id_dictionaries()
 
@@ -187,8 +247,7 @@ def train(dc, imagenet, epochs=500):
         cluster_assignments = cluster(imagenet, dc)
         epoch(imagenet, dc, cluster_assignments, adam, synsetid2idx)
 
-# test alexnet shape 
-# print(models.alexnet(weights=None).features(torch.randn(1, 3, 224, 224)).shape) # torch.Size([1, 256, 6, 6])
+
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 print('Available device:', device)
