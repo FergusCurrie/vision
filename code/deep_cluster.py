@@ -5,8 +5,6 @@ deep learning family.
 https://arxiv.org/pdf/1807.05520.pdf
 
 todo;
-- empty cluster update
-- inverse weighting on cluster size to loss 
 - random flips and crops
 - dropout
 - l2 pen on weights 
@@ -29,6 +27,8 @@ logging + log levels?
 
 random init 
 
+replace all these dictionaries with a nicer solution 
+
 
 using wrong clustering 
 k
@@ -49,7 +49,7 @@ import numpy as np
 import faiss
 import logging 
 
-NUM_CLUSTERS = 10 # TODO: 10000
+NUM_CLUSTERS = 1000 # TODO: 10000
 IMAGENET_DIR = '/home/fergus/data/ImageNet'
 
 # Load the AlexNext model
@@ -59,6 +59,14 @@ IMAGENET_DIR = '/home/fergus/data/ImageNet'
 #imagenet = get_imagenet(batch_size=16)
 
 # Print the model architecture
+
+def log_start_end(function):
+    def wrapper(*args, **kwargs):
+        logger.debug(f'STARTED: {function.__name__}')
+        func = function(*args, **kwargs)
+        logger.debug(f'FINISHED: {function.__name__}')
+        return func
+    return wrapper
 
 class DeepCluster(nn.Module):
     def __init__(self):
@@ -81,6 +89,8 @@ def calculuate_cluster_weightings(cluster_assignments):
     Returns:
         cluster_weightings: dictionary mapping cluster idx to cluster weighting
     '''
+    # print(len(cluster_assignments))
+    # assert(len(cluster_assignments) == 1281167)
     cluster_counts, cluster_weightings = {}, {}
     for i in range(NUM_CLUSTERS):
         cluster_counts[i] = 0
@@ -91,14 +101,13 @@ def calculuate_cluster_weightings(cluster_assignments):
         cluster_weightings[cluster] = 1 / count
     return cluster_weightings
 
-def clean_label(file_str, synsetid2idx):
+def clean_label(file_str, cluster_assignments):
     file = file_str.strip().split(' ')
-    label = file[0].split('/')[0]
-    label =  int(synsetid2idx[label])
-    return label
+    c = cluster_assignments[file[0]] # cluster assignment for this point 
+    return c
     
 
-def loss_function(y_pred, y, cluster_weightings, synsetid2idx):
+def loss_function(ypred, y, cluster_weightings, cluster_assignments):
     '''
     Args:
         y_pred is model output (batch_size,NUM_CLUSTERS)
@@ -108,16 +117,17 @@ def loss_function(y_pred, y, cluster_weightings, synsetid2idx):
     Returns
         negative log liklihood loss, per instance weighted inversely to size of cluster
     '''
-    ytrue = torch.from_numpy(np.array([clean_label(y_i, synsetid2idx) for y_i in y])).type(torch.LongTensor).to(device)
-    # ytrue = torch.from_numpy(np.array([1 for y_i in y])).to(device)
-    weights = [value for _,value in cluster_weightings.items()] # TODO: make sure this is in correct order
-    weights = torch.from_numpy(np.array(weights)).type(torch.FloatTensor).to(device)
+    ytrue = np.array([clean_label(y_i, cluster_assignments) for y_i in y])
+    weights = np.array([value for _,value in cluster_weightings.items()]) # TODO: make sure this is in correct order
+    
+    # puts ytrue and weights on gpu
+    ytrue = torch.from_numpy(ytrue).type(torch.LongTensor).to(device)
+    weights = torch.from_numpy(weights).type(torch.FloatTensor).to(device)
     negative_log_liklihood = torch.nn.NLLLoss(weight=weights)
-    print(y_pred.shape, ytrue.shape, weights.shape)
-    print(y_pred.type(), ytrue.type(), weights.type())
-    return negative_log_liklihood(y_pred, ytrue)
+    logger.debug(f'ytrue: {ytrue} ypred:{ypred}')
+    return negative_log_liklihood(ypred, ytrue)
 
-def epoch(dataloader, model, cluster_assignments, optimizer, synsetid2idx):
+def epoch(dataloader, model, cluster_assignments, optimizer):
     '''
     Train one epoch on model. 
     Args:
@@ -125,10 +135,8 @@ def epoch(dataloader, model, cluster_assignments, optimizer, synsetid2idx):
         model: deepcluster model
         cluster_assignments: dictionary mapping file_str to cluster idx
         optimizer: optimizer for deepcluster model
-        synsetid2idx: dictionary mapping synsetid to cluster idx
     '''
     cluster_weightings = calculuate_cluster_weightings(cluster_assignments)
-
     size = len(dataloader.dataset)
     model.train()
     for batch, (X, y) in enumerate(dataloader):
@@ -136,7 +144,7 @@ def epoch(dataloader, model, cluster_assignments, optimizer, synsetid2idx):
 
         # Compute prediction error
         y_pred, _  = model(X)
-        loss = loss_function(y_pred, y, cluster_weightings, synsetid2idx)
+        loss = loss_function(y_pred, y, cluster_weightings, cluster_assignments)
 
         # Backpropagation
         optimizer.zero_grad()
@@ -146,6 +154,7 @@ def epoch(dataloader, model, cluster_assignments, optimizer, synsetid2idx):
         if batch % 100 == 0:
             loss, current = loss.item(), (batch + 1) * len(X)
             print(f"loss: {loss:>7f}  [{current:>5d}/{size:>5d}]")
+            logger.debug(f"loss: {loss:>7f}  [{current:>5d}/{size:>5d}]")
 
 
 def forward_full_dataset(imagenet, dc):
@@ -165,9 +174,8 @@ def forward_full_dataset(imagenet, dc):
             images = images.to(device)
 
             if batch_idx % 100 == 0:
-                print(f'Cluster predictions {batch_idx} of {len(imagenet)}')
-                if batch_idx > 100:
-                    break
+                print(f'-- Full Forward Cluster predictions {batch_idx} of {len(imagenet)}')
+                logger.debug(f'-- Full Forward Cluster predictions {batch_idx} of {len(imagenet)}')
             
             # forward pass
             _, embeddings  = dc(images)
@@ -248,15 +256,9 @@ def cluster(imagenet, dc):
         file_str2cluster_assignment[file_str] = cluster_assignment[0] # array of len 1
     return file_str2cluster_assignment
 
-# def log_start_end(function):
-#     def wrapper(args, kwargs):
-#         logger.debug(f'STARTED: {function.__name__}')
-#         func = function(*args, **kwargs)
-#         logger.debug(f'FINISHED: {function.__name__}')
-#         return func
-#     return wrapper
 
-# @log_start_end
+
+@log_start_end
 def forward_full_test(imagenet, dc):
     '''
     For testing. Get file_str2embedding pointing to None. 
@@ -303,11 +305,12 @@ def train(dc, imagenet, epochs=500):
 
     for epoch_idx in range(epochs):
         print(f'Epoch {epoch_idx} of {epochs}')
+        logger.debug(f'Epoch {epoch_idx} of {epochs}')
         if epoch_idx !=0 and epoch_idx % 25 == 0:
             torch.save(dc.state_dict(), f"local/DeepCluster_{epoch_idx}.pth")
 
-        cluster_assignments = cluster_test(imagenet, dc)
-        epoch(imagenet, dc, cluster_assignments, adam, synsetid2idx)
+        cluster_assignments = cluster(imagenet, dc)
+        epoch(imagenet, dc, cluster_assignments, adam)
 
 
 
