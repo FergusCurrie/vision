@@ -32,7 +32,14 @@ random init
 
 using wrong clustering 
 k
+
+Follow up paper to deep cluster: 
+https://openaccess.thecvf.com/content_ICCV_2019/papers/Caron_Unsupervised_Pre-Training_of_Image_Features_on_Non-Curated_Data_ICCV_2019_paper.pdf
+
+swav inspiration:
+https://arxiv.org/pdf/1805.01978.pdf
 '''
+
 
 import torch 
 import torch.nn as nn
@@ -40,8 +47,10 @@ import torchvision.models as models
 from data_loader.torch_imagenet import get_imagenet, get_imagenet_class_id_dictionaries
 import numpy as np 
 import faiss
+import logging 
 
-NUM_CLUSTERS = 1000 # TODO: 10000
+NUM_CLUSTERS = 10 # TODO: 10000
+IMAGENET_DIR = '/home/fergus/data/ImageNet'
 
 # Load the AlexNext model
 # alexnet = models.alexnet(weights=None)
@@ -82,7 +91,14 @@ def calculuate_cluster_weightings(cluster_assignments):
         cluster_weightings[cluster] = 1 / count
     return cluster_weightings
 
-def loss(y_pred, y, cluster_weightings, synsetid2idx):
+def clean_label(file_str, synsetid2idx):
+    file = file_str.strip().split(' ')
+    label = file[0].split('/')[0]
+    label =  int(synsetid2idx[label])
+    return label
+    
+
+def loss_function(y_pred, y, cluster_weightings, synsetid2idx):
     '''
     Args:
         y_pred is model output (batch_size,NUM_CLUSTERS)
@@ -92,9 +108,13 @@ def loss(y_pred, y, cluster_weightings, synsetid2idx):
     Returns
         negative log liklihood loss, per instance weighted inversely to size of cluster
     '''
-    ytrue = [synsetid2idx[y_i] for y_i in y]
+    ytrue = torch.from_numpy(np.array([clean_label(y_i, synsetid2idx) for y_i in y])).type(torch.LongTensor).to(device)
+    # ytrue = torch.from_numpy(np.array([1 for y_i in y])).to(device)
     weights = [value for _,value in cluster_weightings.items()] # TODO: make sure this is in correct order
+    weights = torch.from_numpy(np.array(weights)).type(torch.FloatTensor).to(device)
     negative_log_liklihood = torch.nn.NLLLoss(weight=weights)
+    print(y_pred.shape, ytrue.shape, weights.shape)
+    print(y_pred.type(), ytrue.type(), weights.type())
     return negative_log_liklihood(y_pred, ytrue)
 
 def epoch(dataloader, model, cluster_assignments, optimizer, synsetid2idx):
@@ -112,11 +132,11 @@ def epoch(dataloader, model, cluster_assignments, optimizer, synsetid2idx):
     size = len(dataloader.dataset)
     model.train()
     for batch, (X, y) in enumerate(dataloader):
-        X, y = X.to(device), y.to(device)
+        X, y = X.to(device), y
 
         # Compute prediction error
-        _, y_pred = model(X)
-        loss = loss(y_pred, y, cluster_weightings, synsetid2idx)
+        y_pred, _  = model(X)
+        loss = loss_function(y_pred, y, cluster_weightings, synsetid2idx)
 
         # Backpropagation
         optimizer.zero_grad()
@@ -126,6 +146,7 @@ def epoch(dataloader, model, cluster_assignments, optimizer, synsetid2idx):
         if batch % 100 == 0:
             loss, current = loss.item(), (batch + 1) * len(X)
             print(f"loss: {loss:>7f}  [{current:>5d}/{size:>5d}]")
+
 
 def forward_full_dataset(imagenet, dc):
     '''
@@ -145,11 +166,11 @@ def forward_full_dataset(imagenet, dc):
 
             if batch_idx % 100 == 0:
                 print(f'Cluster predictions {batch_idx} of {len(imagenet)}')
-                if batch_idx > 2000:
+                if batch_idx > 100:
                     break
             
             # forward pass
-            ypred, embeddings  = dc(images)
+            _, embeddings  = dc(images)
             
             # put embeddings in dictionary 
             for i, file_str in enumerate(file_strs):
@@ -184,7 +205,7 @@ def faiss_kmeans(X):
         cluster_assignments: numpy array of shape (len(dataset), 1) of cluster assignments
     '''
     kmeans = faiss.Clustering(X.shape[1], NUM_CLUSTERS)
-    kmeans.seed(23)
+    kmeans.seed = np.random.randint(9000)
     kmeans.niter=20
     res = faiss.StandardGpuResources()
     flat_config = faiss.GpuIndexFlatConfig()
@@ -192,7 +213,7 @@ def faiss_kmeans(X):
     flat_config.device = 0
     index = faiss.GpuIndexFlatL2(res, X.shape[1], flat_config)
     kmeans.train(X, index)
-    _, cluster_assignments = kmeans.index.search(X, 1)
+    _, cluster_assignments = index.search(X, 1)
     assert(cluster_assignments.shape == (len(X), 1))
     return cluster_assignments
 
@@ -227,6 +248,47 @@ def cluster(imagenet, dc):
         file_str2cluster_assignment[file_str] = cluster_assignment[0] # array of len 1
     return file_str2cluster_assignment
 
+# def log_start_end(function):
+#     def wrapper(args, kwargs):
+#         logger.debug(f'STARTED: {function.__name__}')
+#         func = function(*args, **kwargs)
+#         logger.debug(f'FINISHED: {function.__name__}')
+#         return func
+#     return wrapper
+
+# @log_start_end
+def forward_full_test(imagenet, dc):
+    '''
+    For testing. Get file_str2embedding pointing to None. 
+    Args:
+        imagenet: dataloader for imagenet dataset
+        dc: deepcluster model
+    Returns:
+        file_str2embedding: dictionary mapping file_str to deep cluster model feature embedding
+    '''
+    logger.debug('STARTED: forward_full_test ')
+    file_str2embedding = {}
+    with open(f'{IMAGENET_DIR}/ImageSets/CLS-LOC/train_cls.txt', 'r') as f:
+        train_files = f.readlines()
+        for file_str in train_files:
+            file = file_str.strip().split(' ')
+            file_str = file[0]
+            file_str2embedding[file_str] = None
+    logger.debug('finshed : forward_full_test ')
+    return file_str2embedding
+
+def cluster_test(imagenet, dc):
+    '''
+    returns cluster assignmetns of 0. allows for skipping clustering on test. 
+    '''
+    file_str2embedding = forward_full_test(imagenet, dc)
+    logger.debug('STARTED: cluster test ')
+    file_str2cluster_assignment = {}
+    for file_str in file_str2embedding.keys():
+        file_str2cluster_assignment[file_str] =  np.random.randint(NUM_CLUSTERS) # array of len 1
+    logger.debug('FINISHED : cluster test')
+    return file_str2cluster_assignment
+
 
 def train(dc, imagenet, epochs=500):
     '''
@@ -244,17 +306,29 @@ def train(dc, imagenet, epochs=500):
         if epoch_idx !=0 and epoch_idx % 25 == 0:
             torch.save(dc.state_dict(), f"local/DeepCluster_{epoch_idx}.pth")
 
-        cluster_assignments = cluster(imagenet, dc)
+        cluster_assignments = cluster_test(imagenet, dc)
         epoch(imagenet, dc, cluster_assignments, adam, synsetid2idx)
 
+
+
+# Logging 
+logging.basicConfig(filename='example.log', level=logging.DEBUG)
+logger = logging.getLogger('deep_cluster_logger')
+my_handler = logging.FileHandler('deep_cluster_logger.log')
+my_handler.setLevel(logging.DEBUG)
+formatter = logging.Formatter('%(asctime)s - %(message)s')
+my_handler.setFormatter(formatter)
+logger.addHandler(my_handler)
 
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 print('Available device:', device)
 dc = DeepCluster().to(device)
 
+logger.debug('Loading imagnet')
 imagenet = get_imagenet(batch_size=64, str_instance_label=True)
 
+logger.debug('Starting train')
 train(dc, imagenet, epochs=500)
 
 

@@ -33,9 +33,11 @@ class ImageNet(Dataset):
             self.filenames.append(file[0])
             label = file[0].split('/')[0]
             if self.str_instance_label == True:
-                self.labels.append(file_str)
+                self.labels.append(file[0]) # n01440764/n01440764_10026
             else:
                 self.labels.append(synsetid2idx[label])
+
+        print(self.filenames[:10])
 
     def __len__(self):
         return len(self.filenames)
@@ -59,6 +61,10 @@ class ImageNet(Dataset):
 
         if tensor.shape ==  (1, 224, 224):
             tensor = tensor.repeat(3, 1, 1)
+
+        if tensor.shape == (4, 224, 224):
+            print('got shape (4,224,224)')
+            tensor = tensor[:3,:,:]
 
         return tensor, label
     
@@ -86,6 +92,8 @@ def get_imagenet(batch_size, str_instance_label=False):
     return DataLoader(training_data, batch_size=batch_size, shuffle=True)
 
 if __name__ == '__main__':
+    a,b,c = get_imagenet_class_id_dictionaries()
+    print(b)
     imagenet = get_imagenet(batch_size=1)
     print(len(imagenet))
     
