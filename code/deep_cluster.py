@@ -156,7 +156,7 @@ def epoch(dataloader, model, cluster_assignments, optimizer):
             print(f"loss: {loss:>7f}  [{current:>5d}/{size:>5d}]")
             logger.debug(f"loss: {loss:>7f}  [{current:>5d}/{size:>5d}]")
 
-
+@log_start_end
 def forward_full_dataset(imagenet, dc):
     '''
     Args:
@@ -185,6 +185,50 @@ def forward_full_dataset(imagenet, dc):
                 file_str2embedding[file_str] = embeddings[i].cpu().numpy()
     return file_str2embedding
 
+
+@log_start_end
+def batched_pca_forward_full_dataset(imagenet, dc):
+    '''
+    Differs from previous function by batching calls to pca so that memory doesn't explode. 
+    Args:
+        imagenet: dataloader for imagenet dataset
+        dc: deepcluster model
+    Returns:
+        file_str2embedding: dictionary mapping file_str to deep cluster model feature embedding
+    '''
+    # First do a foward pass of the dataset 
+    file_str2embedding = {}
+    pca_batch_size = 100000
+    embeddingsX = [] # holds data matrix of embeddings for pca 
+    namesX = [] # holds file_strs for embeddings in embeddingsX
+    with torch.no_grad():
+        for batch_idx, (images, file_strs) in enumerate(imagenet):
+            # put images on gpu 
+            images = images.to(device)
+
+            if batch_idx % 100 == 0:
+                print(f'-- Full Forward Cluster predictions {batch_idx} of {len(imagenet)}')
+                logger.debug(f'-- Full Forward Cluster predictions {batch_idx} of {len(imagenet)}')
+            
+            # forward pass
+            _, embeddings  = dc(images)
+
+            for i, file_str in enumerate(file_strs):
+                embeddingsX.append(embeddings[i].cpu().numpy())
+                namesX.append(file_str)
+
+            # once we have enough embedddings for batch, run pca and add to file_str2embedding
+            # then clear memory on embeddingsX and namesX
+            if len(embeddingsX) >= pca_batch_size:
+                pca_embeddings = faiss_pca(np.array(embeddingsX))
+                for i, file_str in enumerate(namesX):
+                    file_str2embedding[file_str] = pca_embeddings[i]
+                embeddingsX = []
+                namesX = []
+
+    return file_str2embedding
+
+@log_start_end
 def faiss_pca(X):
     '''
     Uses faiss library to do PCA transform on X.
@@ -193,7 +237,7 @@ def faiss_pca(X):
     Returns:
         pca transform of X 
     '''
-    mat = faiss.PCAMatrix(d_in=9216, d_out=1256) 
+    mat = faiss.PCAMatrix(d_in=9216, d_out=256) 
     mat.train(X)
     X = mat.apply(X)
     return X 
@@ -204,6 +248,7 @@ def standardise(X):
     X /=  np.linalg.norm(X, ord=2, axis=1, keepdims=True)
     return X
 
+@log_start_end
 def faiss_kmeans(X):
     '''
     Calculate kmeans cluster assignments for X.
@@ -226,7 +271,7 @@ def faiss_kmeans(X):
     return cluster_assignments
 
 
-
+@log_start_end
 def cluster(imagenet, dc):
     '''
     Find cluster assignments for all images in imagenet dataset.
