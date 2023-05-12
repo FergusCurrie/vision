@@ -214,7 +214,10 @@ def batched_pca_forward_full_dataset(imagenet, dc):
             _, embeddings  = dc(images)
 
             for i, file_str in enumerate(file_strs):
-                embeddingsX.append(embeddings[i].cpu().numpy())
+                e_i = embeddings[i].cpu().numpy()
+                if e_i.shape != (256*6*6,):
+                    print(f'embedding shape = {e_i.shape}')
+                embeddingsX.append(e_i)
                 namesX.append(file_str)
 
             # once we have enough embedddings for batch, run pca and add to file_str2embedding
@@ -237,6 +240,7 @@ def faiss_pca(X):
     Returns:
         pca transform of X 
     '''
+    logger.debug(f'X shape = {X.shape}')
     mat = faiss.PCAMatrix(d_in=9216, d_out=256) 
     mat.train(X)
     X = mat.apply(X)
@@ -281,13 +285,13 @@ def cluster(imagenet, dc):
     Returns:
         file_str2cluster_assignment: dictionary mapping file_str to cluster assignment
     '''
-    file_str2embedding = forward_full_dataset(imagenet, dc)
+    file_str2embedding = batched_pca_forward_full_dataset(imagenet, dc)
 
     # Stack into data matrix 
     X = np.array([value for _,value in file_str2embedding.items()])
     
     # Perform fast PCA using the faiss library 
-    X = faiss_pca(X)
+    # X = faiss_pca(X) # this is already done with batching 
     
     # Standardise data - l2 norm after standardisation, is that wierd? 
     X = standardise(X)
