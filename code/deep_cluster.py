@@ -40,7 +40,7 @@ swav inspiration:
 https://arxiv.org/pdf/1805.01978.pdf
 '''
 
-
+import pickle 
 import torch 
 import torch.nn as nn
 import torchvision.models as models 
@@ -48,6 +48,7 @@ from data_loader.torch_imagenet import get_imagenet, get_imagenet_class_id_dicti
 import numpy as np 
 import faiss
 import logging 
+import os 
 
 NUM_CLUSTERS = 1000 # TODO: 10000
 IMAGENET_DIR = '/home/fergus/data/ImageNet'
@@ -103,6 +104,16 @@ def calculuate_cluster_weightings(cluster_assignments):
 
 def clean_label(file_str, cluster_assignments):
     file = file_str.strip().split(' ')
+    # print(list(cluster_assignments.keys())[:10])
+    # print(len(cluster_assignments)) # 1200384
+    # i = 0
+    # for key, value in cluster_assignments.items():
+    #     print(f'key={key}')
+    #     i+= 1
+    #     if i > 5: 
+    #         break
+    # # print(file[0]) # n04008634/n04008634_5181
+
     c = cluster_assignments[file[0]] # cluster assignment for this point 
     return c
     
@@ -276,7 +287,7 @@ def faiss_kmeans(X):
 
 
 @log_start_end
-def cluster(imagenet, dc):
+def cluster(dc):
     '''
     Find cluster assignments for all images in imagenet dataset.
     Args:
@@ -285,6 +296,7 @@ def cluster(imagenet, dc):
     Returns:
         file_str2cluster_assignment: dictionary mapping file_str to cluster assignment
     '''
+    imagenet = get_imagenet(batch_size=64, str_instance_label=True, iterable=True)
     file_str2embedding = batched_pca_forward_full_dataset(imagenet, dc)
 
     # Stack into data matrix 
@@ -308,7 +320,7 @@ def cluster(imagenet, dc):
 
 
 @log_start_end
-def forward_full_test(imagenet, dc):
+def forward_full_test():
     '''
     For testing. Get file_str2embedding pointing to None. 
     Args:
@@ -358,7 +370,16 @@ def train(dc, imagenet, epochs=500):
         if epoch_idx !=0 and epoch_idx % 25 == 0:
             torch.save(dc.state_dict(), f"local/DeepCluster_{epoch_idx}.pth")
 
-        cluster_assignments = cluster(imagenet, dc)
+        if os.path.exists(f'cluster_assignment_{epoch_idx}.pkl'):
+            with open(f'cluster_assignment_{epoch_idx}.pkl', 'rb') as f:
+                cluster_assignments = pickle.load(f)
+        else:
+            cluster_assignments = cluster(dc)
+        
+        # pickle cluster assignments so I don't have to wait this long again 
+        with open(f'cluster_assignment_{epoch_idx}.pkl', 'wb') as f:
+            pickle.dump(cluster_assignments, f)
+        
         epoch(imagenet, dc, cluster_assignments, adam)
 
 
@@ -385,3 +406,15 @@ train(dc, imagenet, epochs=500)
 
 
 
+# testing cluster assignment - 
+# epoch_idx = 0
+# if os.path.exists(f'cluster_assignment_{epoch_idx}.pkl'):
+#     with open(f'cluster_assignment_{epoch_idx}.pkl', 'rb') as f:
+#         cluster_assignments = pickle.load(f)
+
+# for batch_idx, (images, file_strs) in enumerate(imagenet):
+#     for file_str in file_strs:
+#         if file_str in cluster_assignments:
+#             print('yes')
+#         else:
+#             print('no')

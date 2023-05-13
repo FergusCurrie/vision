@@ -8,66 +8,54 @@ In Data/n07714990:
 '''
 
 import torch 
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, DataLoader, IterableDataset
 from PIL import Image
-from torch.utils.data import DataLoader
 import torchvision.transforms as transforms
 import json
-import os 
 
 
 IMAGENET_DIR = '/home/fergus/data/ImageNet'
 
-class ImageNet(Dataset):
-    def __init__(self, str_instance_label=False):
-        self.filenames = []
-        self.labels = []
-        self.str_instance_label = str_instance_label
 
-        _, _, synsetid2idx = get_imagenet_class_id_dictionaries()
+def load_imagenet_filenames(str_instance_label=True):
+    _, _, synsetid2idx = get_imagenet_class_id_dictionaries()
+    filenames = []
+    labels = []
+    with open(f'{IMAGENET_DIR}/ImageSets/CLS-LOC/train_cls.txt', 'r') as f:
+        train_files = f.readlines()
+    for file_str in train_files:
+        file = file_str.strip().split(' ')
+        filenames.append(file[0])
+        label = file[0].split('/')[0]
+        if str_instance_label == True:
+            labels.append(file[0]) # n01440764/n01440764_10026
+        else:
+            labels.append(synsetid2idx[label])
+    return filenames, labels 
 
-        with open(f'{IMAGENET_DIR}/ImageSets/CLS-LOC/train_cls.txt', 'r') as f:
-            train_files = f.readlines()
-        for file_str in train_files:
-            file = file_str.strip().split(' ')
-            self.filenames.append(file[0])
-            label = file[0].split('/')[0]
-            if self.str_instance_label == True:
-                self.labels.append(file[0]) # n01440764/n01440764_10026
-            else:
-                self.labels.append(synsetid2idx[label])
-
-        print(self.filenames[:10])
-
-    def __len__(self):
-        return len(self.filenames)
-
-    def __getitem__(self, idx):
-        image_filename = self.filenames[idx]
-        label = self.labels[idx]
-
-        # load image 
-        image = Image.open(f'{IMAGENET_DIR}/Data/CLS-LOC/train/{image_filename}.JPEG')
-        
-        # Define the transformation to convert the image to a tensor
-        transform = transforms.Compose([
-            transforms.Resize(256),
-            transforms.CenterCrop(224),
-            transforms.ToTensor()
-        ])
-
-        # Apply the transformation to the image
-        tensor = transform(image)
-
-        if tensor.shape ==  (1, 224, 224):
-            tensor = tensor.repeat(3, 1, 1)
-
-        if tensor.shape == (4, 224, 224):
-            print('got shape (4,224,224)')
-            tensor = tensor[:3,:,:]
-
-        return tensor, label
+def load_imagenet_image(image_filename) -> torch.Tensor:
+    # load image 
+    image = Image.open(f'{IMAGENET_DIR}/Data/CLS-LOC/train/{image_filename}.JPEG')
     
+    # Define the transformation to convert the image to a tensor
+    transform = transforms.Compose([
+        transforms.Resize(256),
+        transforms.CenterCrop(224),
+        transforms.ToTensor()
+    ])
+
+    # Apply the transformation to the image
+    tensor = transform(image)
+
+    if tensor.shape ==  (1, 224, 224):
+        tensor = tensor.repeat(3, 1, 1)
+
+    if tensor.shape == (4, 224, 224):
+        print('got shape (4,224,224)')
+        tensor = tensor[:3,:,:]
+    return tensor
+
+
 def get_imagenet_class_id_dictionaries():
     '''
     Help functions to get between synset id, id and label string of imagnet. 
@@ -87,9 +75,57 @@ def get_imagenet_class_id_dictionaries():
     synsetid2idx = {v:k for k,v in idx2synsetid.items()}   
     return idx2label, idx2synsetid, synsetid2idx
 
-def get_imagenet(batch_size, str_instance_label=False):
-    training_data = ImageNet(str_instance_label=str_instance_label)
-    return DataLoader(training_data, batch_size=batch_size, shuffle=True)
+def get_imagenet(batch_size, str_instance_label=False, iterable=False):
+    if iterable:
+        training_dataing = IterableImagenet(batch_size=batch_size)
+        return DataLoader(training_dataing, batch_size=batch_size)
+    else:
+        training_data = ImageNet(str_instance_label=str_instance_label)
+        return DataLoader(training_data, batch_size=batch_size, shuffle=True)
+
+class IterableImagenet(IterableDataset):
+    def __init__(self, batch_size):
+        self.filenames, self.labels = load_imagenet_filenames()
+        self.batch_size = batch_size
+    def __len__(self):
+        return len(self.filenames)
+    
+    def __iter__(self):
+        # batches itself, iter should get get the ith item? 
+        for i in range(len(self.filenames)):
+            yield load_imagenet_image(self.filenames[i]), self.labels[i]
+
+        # batch_images = []
+        # batch_labels = [] 
+        # for i in range(len(self.filenames)):
+        #     batch_images.append(load_imagenet_image(self.filenames[i]))
+        #     batch_labels.append(self.labels[i])
+            
+        #     if len(batch_images) == self.batch_size:
+        #         print(batch_images[0].shape)
+        #         yield torch.stack(batch_images), batch_labels
+        #         batch_images = []
+        #         batch_labels = []
+
+
+class ImageNet(Dataset):
+    def __init__(self, str_instance_label=False):
+        self.str_instance_label = str_instance_label
+        self.filenames, self.labels = load_imagenet_filenames()
+        print(len(self.filenames))
+
+    def __len__(self):
+        return len(self.filenames)
+
+    def __getitem__(self, idx):
+        image_filename = self.filenames[idx]
+        label = self.labels[idx]
+
+        tensor = load_imagenet_image(image_filename)
+
+        return tensor, label
+    
+
 
 if __name__ == '__main__':
     a,b,c = get_imagenet_class_id_dictionaries()
