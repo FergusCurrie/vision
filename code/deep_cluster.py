@@ -296,7 +296,7 @@ def cluster(dc):
     Returns:
         file_str2cluster_assignment: dictionary mapping file_str to cluster assignment
     '''
-    imagenet = get_imagenet(batch_size=64, str_instance_label=True, iterable=True)
+    # imagenet = get_imagenet(batch_size=64, str_instance_label=True, iterable=True)
     file_str2embedding = batched_pca_forward_full_dataset(imagenet, dc)
 
     # Stack into data matrix 
@@ -400,6 +400,7 @@ dc = DeepCluster().to(device)
 
 logger.debug('Loading imagnet')
 imagenet = get_imagenet(batch_size=64, str_instance_label=True)
+
 
 logger.debug('Starting train')
 train(dc, imagenet, epochs=500)
