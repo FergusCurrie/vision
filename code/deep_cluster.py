@@ -88,7 +88,7 @@ class DeepCluster():
         for _, (_, instance) in enumerate(self.dataset):
             self.instance2cluster_idx[instance] = np.random.randint(NUM_CLUSTERS)
     
-    def loss_function(self, ypred, y):
+    def loss_function(self, ypred, y, cluster_weightings):
         '''
         Args:
             y_pred is model output (batch_size,NUM_CLUSTERS)
@@ -97,7 +97,7 @@ class DeepCluster():
             negative log liklihood loss, per instance weighted inversely to size of cluster
         '''
         ytrue = np.array([clean_label(y_i, self.instance2cluster_idx) for y_i in y])
-        weights = np.array([value for _,value in self.cluster_idx2cluster_weighting.items()]) # TODO: make sure this is in correct order
+        weights = np.array([value for _,value in cluster_weightings.items()]) # TODO: make sure this is in correct order
         
         # puts ytrue and weights on gpu
         ytrue = torch.from_numpy(ytrue).type(torch.LongTensor).to(self.device)
@@ -176,7 +176,8 @@ def calculuate_cluster_weightings(instance2cluster_idx):
     Returns:
         cluster_weightings: dictionary mapping cluster idx to cluster weighting
     '''
-    assert(len(instance2cluster_idx) == 1281167)
+    print(len(instance2cluster_idx))  # 1200384
+    assert(len(instance2cluster_idx) == 1281167) # 1281167
     cluster_counts, cluster_weightings = {}, {}
     for i in range(NUM_CLUSTERS):
         cluster_counts[i] = 0

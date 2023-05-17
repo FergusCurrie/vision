@@ -29,6 +29,7 @@ class Cluster():
         '''
         # First do a foward pass of the dataset 
         instance2embedding = {}
+       
         with torch.no_grad():
             for batch_idx, (images, file_strs) in enumerate(self.dataset):
                 # print(f'file_strs={file_strs}')
@@ -44,7 +45,9 @@ class Cluster():
                 
                 # put embeddings in dictionary 
                 for i, file_str in enumerate(file_strs):
+                    
                     instance2embedding[file_str] = embeddings[i].cpu().numpy()
+
         return instance2embedding
 
 
@@ -60,6 +63,7 @@ class Cluster():
         pca_batch_size = 100000
         embeddingsX = [] # holds data matrix of embeddings for pca 
         namesX = [] # holds file_strs for embeddings in embeddingsX
+        file_str_set = set()
         with torch.no_grad():
             for batch_idx, (images, file_strs) in enumerate(self.dataset):
                 # put images on gpu 
@@ -73,6 +77,7 @@ class Cluster():
                 _, embeddings  = self.model(images)
 
                 for i, file_str in enumerate(file_strs):
+                    file_str_set.add(file_str)
                     e_i = embeddings[i].cpu().numpy()
                     if e_i.shape != (256*6*6,):
                         print(f'embedding shape = {e_i.shape}')
@@ -87,7 +92,13 @@ class Cluster():
                         instance2embedding[file_str] = pca_embeddings[i]
                     embeddingsX = []
                     namesX = []
-
+        
+        # Add the final batch of embeddings to instance2embedding
+        pca_embeddings = self.faiss_pca(np.array(embeddingsX))
+        for i, file_str in enumerate(namesX):
+            instance2embedding[file_str] = pca_embeddings[i]
+        
+        logger.debug(f' Full forward dataset file str set len = {len(file_str_set)}')
         return instance2embedding
 
     @log_start_end(logger)

@@ -94,6 +94,7 @@ class IterableImagenet(IterableDataset):
         # batches itself, iter should get get the ith item? 
         for i in range(len(self.filenames)):
             yield load_imagenet_image(self.filenames[i]), self.labels[i]
+            # yield self.filenames[i], self.labels[i]
 
         # batch_images = []
         # batch_labels = [] 
@@ -130,6 +131,9 @@ class ImageNet(Dataset):
 if __name__ == '__main__':
     a,b,c = get_imagenet_class_id_dictionaries()
     print(b)
-    imagenet = get_imagenet(batch_size=1)
+    imagenet = get_imagenet(batch_size=1, str_instance_label=True, iterable=True)
     print(len(imagenet))
-    
+    file_str_set = set()
+    for batch_idx, (filename, file_strs) in enumerate(imagenet):
+        file_str_set.add(file_strs)
+    print(len(file_str_set))
