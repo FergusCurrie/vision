@@ -96,15 +96,15 @@ class DeepCluster():
         Returns
             negative log liklihood loss, per instance weighted inversely to size of cluster
         '''
+        # print(cluster_weightings)
         ytrue = np.array([clean_label(y_i, self.instance2cluster_idx) for y_i in y])
         weights = np.array([value for _,value in cluster_weightings.items()]) # TODO: make sure this is in correct order
         
         # puts ytrue and weights on gpu
         ytrue = torch.from_numpy(ytrue).type(torch.LongTensor).to(self.device)
         weights = torch.from_numpy(weights).type(torch.FloatTensor).to(self.device)
-        negative_log_liklihood = torch.nn.NLLLoss(weight=weights)
-        logger.debug(f'ytrue: {ytrue} ypred:{ypred}')
-        return negative_log_liklihood(ypred, ytrue)
+        cce = torch.nn.CrossEntropyLoss(weight=weights)
+        return cce(ypred, ytrue)
 
     def epoch(self, dataloader):
         '''
@@ -124,7 +124,7 @@ class DeepCluster():
 
             # Compute prediction error
             y_pred, _  = self.model(X)
-            loss = self.loss_function(y_pred, y)
+            loss = self.loss_function(y_pred, y, cluster_weightings)
 
             # Backpropagation
             self.optimizer.zero_grad()
